@@ -1,0 +1,6 @@
+# Soldeer dependencies (installed via `forge soldeer install`)
+dependencies/
+
+# Forge build artifacts
+out/
+cache/
