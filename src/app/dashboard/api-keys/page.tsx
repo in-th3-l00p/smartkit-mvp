@@ -2,6 +2,9 @@
 
 import { useState } from 'react'
 import { useDashboard } from "@/hooks/use-dashboard"
+import { useProject } from "@/hooks/use-project"
+import { useMutation } from 'convex/react'
+import { api } from '../../../../convex/_generated/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -9,27 +12,18 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Plus, Eye, EyeOff, Copy, Key } from "lucide-react"
+import { Plus, Copy, Key } from "lucide-react"
 import { toast } from "sonner"
-import { useDashboardStore } from "@/store/dashboard-store"
 import { Skeleton } from "@/components/ui/skeleton"
 
 export default function ApiKeysPage() {
   const { apiKeys, isLoading } = useDashboard()
+  const { projectId } = useProject()
+  const createApiKeyAuthed = useMutation(api.apiKeys.createApiKeyAuthed)
   const [createOpen, setCreateOpen] = useState(false)
   const [keyName, setKeyName] = useState('')
   const [isCreating, setIsCreating] = useState(false)
-  const [visibleKeys, setVisibleKeys] = useState<Set<string>>(new Set())
-  const addApiKey = useDashboardStore((s) => s.addApiKey)
-
-  const toggleVisibility = (id: string) => {
-    setVisibleKeys((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
+  const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null)
 
   const copyKey = (key: string) => {
     navigator.clipboard.writeText(key)
@@ -41,20 +35,30 @@ export default function ApiKeysPage() {
       toast.error('Please enter a name')
       return
     }
+    if (!projectId) return
     setIsCreating(true)
     try {
-      const res = await fetch('/api/keys', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: keyName }),
+      const rawKey = `sk_live_${crypto.randomUUID().replace(/-/g, '')}`
+      const keyPrefix = rawKey.slice(0, 12)
+
+      const encoder = new TextEncoder()
+      const data = encoder.encode(rawKey)
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+      const hashArray = Array.from(new Uint8Array(hashBuffer))
+      const keyHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+
+      await createApiKeyAuthed({
+        projectId,
+        keyHash,
+        keyPrefix,
+        name: keyName,
       })
-      const apiKey = await res.json()
-      if (!res.ok) throw new Error(apiKey.error)
-      addApiKey(apiKey)
+
+      setNewlyCreatedKey(rawKey)
       toast.success('API key created!', { description: 'Make sure to copy your key now.' })
       setKeyName('')
       setCreateOpen(false)
-    } catch (error) {
+    } catch {
       toast.error('Failed to create API key')
     } finally {
       setIsCreating(false)
@@ -82,6 +86,22 @@ export default function ApiKeysPage() {
         </Button>
       </div>
 
+      {newlyCreatedKey && (
+        <Card className="border-primary">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium">Your new API key (copy it now, it won&apos;t be shown again):</p>
+                <p className="font-mono text-sm mt-1 break-all">{newlyCreatedKey}</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => { copyKey(newlyCreatedKey); setNewlyCreatedKey(null) }}>
+                <Copy className="h-4 w-4 mr-2" /> Copy
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Your API Keys</CardTitle>
@@ -94,11 +114,10 @@ export default function ApiKeysPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
-                <TableHead>Key</TableHead>
+                <TableHead>Key Prefix</TableHead>
                 <TableHead>Requests</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead>Last Used</TableHead>
-                <TableHead></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -111,7 +130,7 @@ export default function ApiKeysPage() {
                     </div>
                   </TableCell>
                   <TableCell className="font-mono text-xs">
-                    {visibleKeys.has(apiKey.id) ? apiKey.key : apiKey.key.slice(0, 12) + '\u2022'.repeat(20)}
+                    {apiKey.key}{'*'.repeat(20)}
                   </TableCell>
                   <TableCell>
                     <Badge variant="secondary">{apiKey.requestCount}</Badge>
@@ -122,21 +141,11 @@ export default function ApiKeysPage() {
                   <TableCell className="text-sm text-muted-foreground">
                     {apiKey.lastUsed ? new Date(apiKey.lastUsed).toLocaleDateString() : 'Never'}
                   </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="sm" onClick={() => toggleVisibility(apiKey.id)}>
-                        {visibleKeys.has(apiKey.id) ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => copyKey(apiKey.key)}>
-                        <Copy className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
                 </TableRow>
               ))}
               {apiKeys.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                     No API keys yet. Create one to get started.
                   </TableCell>
                 </TableRow>

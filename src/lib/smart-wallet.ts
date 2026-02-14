@@ -1,5 +1,6 @@
 import { createPublicClient, http, formatEther } from 'viem'
 import { config } from './config'
+import { getChainConfig, type ChainConfig } from './chains'
 import { getConvexClient } from './convex'
 import { api } from '../../convex/_generated/api'
 import type { Id } from '../../convex/_generated/dataModel'
@@ -87,6 +88,9 @@ export class SmartWalletService {
       throw new Error('Wallet not found')
     }
 
+    // Fetch chain config (with deployment addresses from Convex)
+    const chainConfig = await getChainConfig(wallet.chainId)
+
     const sender = wallet.address as `0x${string}`
     const target = params.to as `0x${string}`
     const value = BigInt(params.value || '0')
@@ -167,7 +171,7 @@ export class SmartWalletService {
     }
 
     // Sign the UserOp hash
-    const userOpHashForSigning = this.computeUserOpHash(userOp)
+    const userOpHashForSigning = this.computeUserOpHash(userOp, chainConfig)
     const signature = await signUserOpHash(userOpHashForSigning)
     userOp.signature = signature
 
@@ -183,7 +187,7 @@ export class SmartWalletService {
       value: params.value || '0',
       data: params.data || '0x',
       status: 'pending',
-      chainId: 84532,
+      chainId: wallet.chainId,
       gasSponsored: sponsored,
     })
 
@@ -242,8 +246,10 @@ export class SmartWalletService {
     maxPriorityFeePerGas: bigint
     paymasterAndData: `0x${string}`
     signature: `0x${string}`
-  }): `0x${string}` {
+  }, chainConfig?: ChainConfig): `0x${string}` {
     const { keccak256, encodeAbiParameters } = require('viem')
+    const entryPoint = chainConfig?.entryPointAddress ?? config.entryPointAddress
+    const chainId = chainConfig?.chain.id ?? config.chain.id
     const packed = encodeAbiParameters(
       [
         { type: 'address' },
@@ -270,7 +276,7 @@ export class SmartWalletService {
     const finalHash = keccak256(
       encodeAbiParameters(
         [{ type: 'bytes32' }, { type: 'address' }, { type: 'uint256' }],
-        [userOpPacked, config.entryPointAddress, BigInt(config.chain.id)]
+        [userOpPacked, entryPoint, BigInt(chainId)]
       )
     )
     return finalHash

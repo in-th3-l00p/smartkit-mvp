@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { checkRateLimit, apiRateLimit, authRateLimit } from '@/lib/security/rate-limit'
+import { checkRateLimit, apiRateLimit } from '@/lib/security/rate-limit'
 import { corsHeaders, handlePreflight } from '@/lib/security/cors'
 
 export async function middleware(request: NextRequest) {
@@ -31,30 +31,9 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // Rate limiting for auth endpoints
-  if (pathname.startsWith('/api/auth/')) {
-    const ip = request.headers.get('x-forwarded-for')?.split(',')[0] ?? 'unknown'
-    const result = await checkRateLimit(authRateLimit, `auth:${ip}`)
-
-    if (!result.success) {
-      return NextResponse.json(
-        { error: 'Too many requests. Please try again later.' },
-        {
-          status: 429,
-          headers: {
-            'Retry-After': String(Math.ceil((result.reset - Date.now()) / 1000)),
-            'X-RateLimit-Limit': String(result.limit),
-            'X-RateLimit-Remaining': '0',
-          },
-        }
-      )
-    }
-  }
-
   // Rate limiting for API routes (by API key or IP)
   if (
     pathname.startsWith('/api/') &&
-    !pathname.startsWith('/api/auth/') &&
     !pathname.startsWith('/api/health')
   ) {
     const authHeader = request.headers.get('authorization')
@@ -81,9 +60,6 @@ export async function middleware(request: NextRequest) {
       )
     }
   }
-
-  // Dashboard session check (allow access — actual auth happens in route handlers)
-  // The middleware just sets security headers; route handlers enforce authentication
 
   return response
 }

@@ -1,16 +1,18 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { authTables } from "@convex-dev/auth/server";
 
 export default defineSchema({
+  ...authTables,
+
   projects: defineTable({
     name: v.string(),
-    ownerEmail: v.string(),
-    passwordHash: v.string(),
+    ownerId: v.id("users"),
     stripeCustomerId: v.optional(v.string()),
     stripeSubscriptionId: v.optional(v.string()),
     planTier: v.optional(v.string()),
   })
-    .index("by_ownerEmail", ["ownerEmail"])
+    .index("by_ownerId", ["ownerId"])
     .index("by_stripeCustomerId", ["stripeCustomerId"]),
 
   wallets: defineTable({
@@ -76,4 +78,19 @@ export default defineSchema({
     statusCode: v.number(),
     duration: v.number(),
   }).index("by_projectId", ["projectId"]),
+
+  deployments: defineTable({
+    contractName: v.string(),
+    address: v.string(),
+    chainId: v.number(),
+    deployer: v.optional(v.string()),
+    blockNumber: v.optional(v.number()),
+    txHash: v.optional(v.string()),
+    abiHash: v.optional(v.string()),
+    verified: v.boolean(),
+    projectId: v.optional(v.id("projects")),
+  })
+    .index("by_chainId", ["chainId"])
+    .index("by_chainId_contractName", ["chainId", "contractName"])
+    .index("by_address", ["address"]),
 });

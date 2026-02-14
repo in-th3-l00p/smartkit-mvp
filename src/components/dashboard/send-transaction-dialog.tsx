@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
-import { useDashboardStore } from "@/store/dashboard-store"
 
 interface SendTransactionDialogProps {
   open: boolean
@@ -20,8 +19,6 @@ export function SendTransactionDialog({ open, onOpenChange, walletAddress }: Sen
   const [data, setData] = useState('0x')
   const [fromAddress, setFromAddress] = useState(walletAddress || '')
   const [isLoading, setIsLoading] = useState(false)
-  const addTransaction = useDashboardStore((s) => s.addTransaction)
-
   const handleSend = async () => {
     if (!fromAddress || !to) {
       toast.error('Please fill in required fields')
@@ -45,7 +42,6 @@ export function SendTransactionDialog({ open, onOpenChange, walletAddress }: Sen
 
       if (!res.ok) throw new Error(tx.error)
 
-      addTransaction(tx)
       toast.success('Transaction submitted!', {
         description: `UserOp: ${tx.userOpHash.slice(0, 10)}...`,
       })

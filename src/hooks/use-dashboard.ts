@@ -1,55 +1,100 @@
 'use client'
 
-import { useEffect } from 'react'
-import { useDashboardStore } from '@/store/dashboard-store'
+import { useQuery } from 'convex/react'
+import { api } from '../../convex/_generated/api'
+import { useProject } from './use-project'
 
-async function fetchJson<T>(url: string, fallback: T): Promise<T> {
-  try {
-    const res = await fetch(url)
-    if (!res.ok) return fallback
-    const contentType = res.headers.get('content-type')
-    if (!contentType?.includes('application/json')) return fallback
-    return await res.json()
-  } catch {
-    return fallback
-  }
-}
-
-const defaultStats = {
-  totalWallets: 0,
-  totalTransactions: 0,
-  successfulTxs: 0,
-  failedTxs: 0,
-  pendingTxs: 0,
-  totalGasSponsored: '0',
-  successRate: '0%',
+export interface Stats {
+  totalWallets: number
+  totalTransactions: number
+  successfulTxs: number
+  failedTxs: number
+  pendingTxs: number
+  totalGasSponsored: string
+  successRate: string
 }
 
 export function useDashboard() {
-  const store = useDashboardStore()
+  const { projectId } = useProject()
 
-  useEffect(() => {
-    async function fetchData() {
-      store.setLoading(true)
-      try {
-        const [wallets, transactions, stats, apiKeys] = await Promise.all([
-          fetchJson('/api/wallets', []),
-          fetchJson('/api/transactions', []),
-          fetchJson('/api/stats', defaultStats),
-          fetchJson('/api/keys', []),
-        ])
-        store.setWallets(wallets)
-        store.setTransactions(transactions)
-        store.setStats(stats)
-        store.setApiKeys(apiKeys)
-      } catch (error) {
-        console.error('Failed to fetch dashboard data:', error)
-      } finally {
-        store.setLoading(false)
-      }
-    }
-    fetchData()
-  }, [])
+  const wallets = useQuery(
+    api.wallets.getMyWallets,
+    projectId ? { projectId } : 'skip'
+  )
 
-  return store
+  const transactions = useQuery(
+    api.transactions.getMyTransactions,
+    projectId ? { projectId } : 'skip'
+  )
+
+  const apiKeys = useQuery(
+    api.apiKeys.getMyApiKeys,
+    projectId ? { projectId } : 'skip'
+  )
+
+  const isLoading =
+    wallets === undefined || transactions === undefined || apiKeys === undefined
+
+  // Compute stats client-side from reactive data
+  const txList = transactions ?? []
+  const walletList = wallets ?? []
+
+  const totalTransactions = txList.length
+  const successfulTxs = txList.filter((t) => t.status === 'success').length
+  const failedTxs = txList.filter((t) => t.status === 'failed').length
+  const pendingTxs = txList.filter(
+    (t) => t.status === 'pending' || t.status === 'submitted'
+  ).length
+  const sponsoredTxs = txList.filter((t) => t.gasSponsored)
+  const totalGasSponsored = sponsoredTxs
+    .reduce((sum, t) => sum + parseFloat(t.gasCost || '0'), 0)
+    .toFixed(4)
+
+  const stats: Stats = {
+    totalWallets: walletList.length,
+    totalTransactions,
+    successfulTxs,
+    failedTxs,
+    pendingTxs,
+    totalGasSponsored,
+    successRate:
+      totalTransactions > 0
+        ? ((successfulTxs / totalTransactions) * 100).toFixed(1)
+        : '0',
+  }
+
+  return {
+    wallets: walletList.map((w) => ({
+      id: w._id,
+      address: w.address,
+      userId: w.userId,
+      email: w.email,
+      salt: w.salt,
+      deployed: w.deployed,
+      createdAt: new Date(w._creationTime).toISOString(),
+    })),
+    transactions: txList.map((t) => ({
+      id: t._id,
+      walletAddress: t.walletAddress,
+      userOpHash: t.userOpHash,
+      txHash: t.txHash ?? null,
+      to: t.to,
+      value: t.value,
+      data: t.data,
+      status: t.status as 'pending' | 'submitted' | 'success' | 'failed',
+      gasSponsored: t.gasSponsored,
+      gasCost: t.gasCost ?? null,
+      createdAt: new Date(t._creationTime).toISOString(),
+    })),
+    apiKeys: (apiKeys ?? []).map((k) => ({
+      id: k._id,
+      key: k.keyPrefix,
+      name: k.name,
+      createdAt: new Date(k._creationTime).toISOString(),
+      lastUsed: k.lastUsed ? new Date(k.lastUsed).toISOString() : null,
+      requestCount: k.requestCount,
+    })),
+    stats,
+    isLoading,
+  }
 }

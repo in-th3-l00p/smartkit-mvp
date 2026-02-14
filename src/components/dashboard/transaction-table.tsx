@@ -2,7 +2,17 @@
 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import type { Transaction } from "@/store/dashboard-store"
+export interface Transaction {
+  id: string
+  txHash: string
+  userOpHash: string
+  walletAddress: string
+  to: string
+  status: string
+  gasSponsored: boolean
+  gasCost: string | null
+  createdAt: string
+}
 
 interface TransactionTableProps {
   transactions: Transaction[]

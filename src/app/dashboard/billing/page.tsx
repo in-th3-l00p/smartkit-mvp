@@ -1,6 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
+import { useDashboard } from '@/hooks/use-dashboard'
+import { useProject } from '@/hooks/use-project'
 import {
   Card,
   CardContent,
@@ -156,46 +158,21 @@ function generateDemoBilling(): BillingData {
 // ---------------------------------------------------------------------------
 
 export default function BillingPage() {
-  const [billing, setBilling] = useState<BillingData | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  const { stats, isLoading: dashLoading } = useDashboard()
+  const { project, projectId } = useProject()
   const [checkoutLoading, setCheckoutLoading] = useState<PlanTier | null>(null)
   const [portalLoading, setPortalLoading] = useState(false)
 
-  useEffect(() => {
-    let cancelled = false
-
-    async function fetchBillingData() {
-      try {
-        // In production this would call a /api/billing/status endpoint
-        // For the MVP, fall back to demo data
-        const res = await fetch('/api/stats')
-        if (!res.ok) throw new Error('API error')
-        const stats = await res.json()
-
-        if (!cancelled) {
-          setBilling({
-            plan: PLANS.free,
-            usage: {
-              walletsUsed: stats.totalWallets ?? 23,
-              transactionsUsed: stats.totalTransactions ?? 347,
-            },
-            hasStripeCustomer: false,
-          })
-        }
-      } catch {
-        if (!cancelled) {
-          setBilling(generateDemoBilling())
-        }
-      } finally {
-        if (!cancelled) setIsLoading(false)
-      }
-    }
-
-    fetchBillingData()
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const isLoading = dashLoading
+  const planTier = (project?.planTier ?? 'free') as PlanTier
+  const billing: BillingData = {
+    plan: PLANS[planTier] ?? PLANS.free,
+    usage: {
+      walletsUsed: stats.totalWallets,
+      transactionsUsed: stats.totalTransactions,
+    },
+    hasStripeCustomer: !!project?.stripeCustomerId,
+  }
 
   // -- Handlers ---------------------------------------------------------------
 
@@ -219,7 +196,7 @@ export default function BillingPage() {
       const res = await fetch('/api/billing/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ priceId }),
+        body: JSON.stringify({ priceId, projectId }),
       })
 
       const data = await res.json()
@@ -243,6 +220,7 @@ export default function BillingPage() {
       const res = await fetch('/api/billing/portal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId }),
       })
 
       const data = await res.json()
@@ -261,7 +239,7 @@ export default function BillingPage() {
 
   // -- Loading state ----------------------------------------------------------
 
-  if (isLoading || !billing) {
+  if (isLoading) {
     return <BillingSkeleton />
   }
 

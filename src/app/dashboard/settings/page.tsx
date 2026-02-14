@@ -1,6 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
+import { useQuery, useMutation } from 'convex/react'
+import { api } from '../../../../convex/_generated/api'
+import { useProject } from '@/hooks/use-project'
 import {
   Card,
   CardContent,
@@ -16,92 +19,47 @@ import { Separator } from '@/components/ui/separator'
 import { Settings, Globe, Key, Bell, Plus, Trash2, Save, Copy } from 'lucide-react'
 import { toast } from 'sonner'
 import { config } from '@/lib/config'
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface WebhookEntry {
-  id: string
-  url: string
-  events: string[]
-  active: boolean
-}
-
-// ---------------------------------------------------------------------------
-// Settings Page
-// ---------------------------------------------------------------------------
+import type { Id } from '../../../../convex/_generated/dataModel'
 
 export default function SettingsPage() {
-  // -- Project name state ---------------------------------------------------
+  const { project, projectId } = useProject()
+
+  const webhooks = useQuery(
+    api.webhooksDb.getMyWebhooks,
+    projectId ? { projectId } : 'skip'
+  )
+
+  const updateProjectName = useMutation(api.projects.updateProjectName)
+  const createMyWebhook = useMutation(api.webhooksDb.createMyWebhook)
+  const deleteMyWebhook = useMutation(api.webhooksDb.deleteMyWebhook)
+
   const [projectName, setProjectName] = useState('')
+  const [nameInitialized, setNameInitialized] = useState(false)
   const [isSavingName, setIsSavingName] = useState(false)
-
-  // -- Webhook state --------------------------------------------------------
-  const [webhooks, setWebhooks] = useState<WebhookEntry[]>([])
   const [newWebhookUrl, setNewWebhookUrl] = useState('')
-  const [isLoadingWebhooks, setIsLoadingWebhooks] = useState(true)
 
-  // -- Load project name and webhooks on mount ------------------------------
-
-  const loadProjectData = useCallback(async () => {
-    try {
-      const res = await fetch('/api/project')
-      if (res.ok) {
-        const data = await res.json()
-        setProjectName(data.name)
-      }
-    } catch {
-      // ignore
-    }
-  }, [])
-
-  const loadWebhooks = useCallback(async () => {
-    try {
-      const res = await fetch('/api/webhooks')
-      if (res.ok) {
-        const data = await res.json()
-        setWebhooks(data)
-      }
-    } catch {
-      // ignore
-    } finally {
-      setIsLoadingWebhooks(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    loadProjectData()
-    loadWebhooks()
-  }, [loadProjectData, loadWebhooks])
-
-  // -- Handlers: project name -----------------------------------------------
+  // Sync project name from query (once)
+  if (project && !nameInitialized) {
+    setProjectName(project.name)
+    setNameInitialized(true)
+  }
 
   const handleSaveProjectName = async () => {
     if (!projectName.trim()) {
       toast.error('Project name cannot be empty')
       return
     }
+    if (!projectId) return
     setIsSavingName(true)
     try {
-      const res = await fetch('/api/project', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: projectName.trim() }),
-      })
-      if (res.ok) {
-        toast.success('Project name updated')
-      } else {
-        toast.error('Failed to update project name')
-      }
+      await updateProjectName({ id: projectId, name: projectName.trim() })
+      toast.success('Project name updated')
     } catch {
       toast.error('Failed to update project name')
     } finally {
       setIsSavingName(false)
     }
   }
-
-  // -- Handlers: webhooks ---------------------------------------------------
 
   const handleAddWebhook = async () => {
     const trimmed = newWebhookUrl.trim()
@@ -115,25 +73,22 @@ export default function SettingsPage() {
       toast.error('Please enter a valid URL')
       return
     }
-    if (webhooks.some((w) => w.url === trimmed)) {
+    if (webhooks?.some((w) => w.url === trimmed)) {
       toast.error('This webhook URL is already registered')
       return
     }
+    if (!projectId) return
 
     try {
-      const res = await fetch('/api/webhooks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: trimmed }),
+      await createMyWebhook({
+        projectId,
+        url: trimmed,
+        events: ['wallet.created', 'transaction.success', 'transaction.failed'],
+        secret: crypto.randomUUID(),
+        active: true,
       })
-      if (res.ok) {
-        const data = await res.json()
-        setWebhooks((prev) => [...prev, data])
-        setNewWebhookUrl('')
-        toast.success('Webhook URL added')
-      } else {
-        toast.error('Failed to add webhook')
-      }
+      setNewWebhookUrl('')
+      toast.success('Webhook URL added')
     } catch {
       toast.error('Failed to add webhook')
     }
@@ -141,13 +96,8 @@ export default function SettingsPage() {
 
   const handleRemoveWebhook = async (id: string) => {
     try {
-      const res = await fetch(`/api/webhooks/${id}`, { method: 'DELETE' })
-      if (res.ok) {
-        setWebhooks((prev) => prev.filter((w) => w.id !== id))
-        toast.success('Webhook URL removed')
-      } else {
-        toast.error('Failed to remove webhook')
-      }
+      await deleteMyWebhook({ id: id as Id<'webhooks'> })
+      toast.success('Webhook URL removed')
     } catch {
       toast.error('Failed to remove webhook')
     }
@@ -158,7 +108,8 @@ export default function SettingsPage() {
     toast.success('Copied to clipboard')
   }
 
-  // -- Render ---------------------------------------------------------------
+  const webhookList = webhooks ?? []
+  const isLoadingWebhooks = webhooks === undefined
 
   return (
     <div className="space-y-8">
@@ -173,9 +124,7 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      {/* ------------------------------------------------------------------ */}
       {/* Project Name */}
-      {/* ------------------------------------------------------------------ */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
@@ -205,9 +154,7 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* ------------------------------------------------------------------ */}
       {/* Webhook URLs */}
-      {/* ------------------------------------------------------------------ */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
@@ -220,7 +167,6 @@ export default function SettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Add new webhook */}
           <div className="flex items-end gap-3">
             <div className="flex-1 space-y-2">
               <Label htmlFor="webhookUrl">New Webhook URL</Label>
@@ -243,21 +189,20 @@ export default function SettingsPage() {
 
           <Separator />
 
-          {/* Registered webhooks list */}
           {isLoadingWebhooks ? (
             <div className="text-center py-8 text-sm text-muted-foreground">
               Loading webhooks...
             </div>
-          ) : webhooks.length === 0 ? (
+          ) : webhookList.length === 0 ? (
             <div className="text-center py-8 text-sm text-muted-foreground">
               No webhook URLs registered yet. Add one above to start receiving
               event notifications.
             </div>
           ) : (
             <div className="space-y-2">
-              {webhooks.map((webhook) => (
+              {webhookList.map((webhook) => (
                 <div
-                  key={webhook.id}
+                  key={webhook._id}
                   className="flex items-center justify-between rounded-lg border px-4 py-3"
                 >
                   <span className="text-sm font-mono truncate mr-4">
@@ -266,7 +211,7 @@ export default function SettingsPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleRemoveWebhook(webhook.id)}
+                    onClick={() => handleRemoveWebhook(webhook._id)}
                     className="text-destructive hover:text-destructive shrink-0"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -278,9 +223,7 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* ------------------------------------------------------------------ */}
       {/* Environment Info */}
-      {/* ------------------------------------------------------------------ */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
@@ -295,7 +238,6 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Chain */}
             <div className="space-y-1">
               <Label className="text-muted-foreground">Chain</Label>
               <div className="flex items-center gap-2">
@@ -306,13 +248,11 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            {/* RPC URL */}
             <div className="space-y-1">
               <Label className="text-muted-foreground">RPC URL</Label>
               <p className="text-sm font-mono truncate">{config.rpcUrl}</p>
             </div>
 
-            {/* EntryPoint */}
             <div className="space-y-1">
               <Label className="text-muted-foreground">
                 EntryPoint (ERC-4337)
@@ -331,7 +271,6 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            {/* Factory */}
             <div className="space-y-1">
               <Label className="text-muted-foreground">Factory Address</Label>
               <div className="flex items-center gap-2">
@@ -348,7 +287,6 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            {/* Paymaster */}
             <div className="space-y-1">
               <Label className="text-muted-foreground">Paymaster Address</Label>
               <div className="flex items-center gap-2">

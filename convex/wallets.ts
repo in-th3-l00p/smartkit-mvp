@@ -1,5 +1,58 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
+
+// ---------------------------------------------------------------------------
+// Helper: verify the authenticated user owns the project
+// ---------------------------------------------------------------------------
+
+async function verifyOwnership(
+  ctx: { db: any },
+  userId: any,
+  projectId: any
+) {
+  const project = await ctx.db.get(projectId);
+  if (!project || project.ownerId !== userId) {
+    throw new Error("Not authorized");
+  }
+  return project;
+}
+
+// ---------------------------------------------------------------------------
+// Auth-checked queries (dashboard)
+// ---------------------------------------------------------------------------
+
+export const getMyWallets = query({
+  args: { projectId: v.id("projects") },
+  handler: async (ctx, { projectId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    await verifyOwnership(ctx, userId, projectId);
+    return ctx.db
+      .query("wallets")
+      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+      .order("desc")
+      .collect();
+  },
+});
+
+export const getMyWalletCount = query({
+  args: { projectId: v.id("projects") },
+  handler: async (ctx, { projectId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    await verifyOwnership(ctx, userId, projectId);
+    const wallets = await ctx.db
+      .query("wallets")
+      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+      .collect();
+    return wallets.length;
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Server-side queries (used by API routes via ConvexHttpClient)
+// ---------------------------------------------------------------------------
 
 export const getWalletByProjectAndUser = query({
   args: { projectId: v.id("projects"), userId: v.string() },
@@ -46,6 +99,10 @@ export const getWalletCount = query({
     return wallets.length;
   },
 });
+
+// ---------------------------------------------------------------------------
+// Mutations (server-side)
+// ---------------------------------------------------------------------------
 
 export const createWallet = mutation({
   args: {

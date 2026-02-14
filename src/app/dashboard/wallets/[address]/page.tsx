@@ -11,7 +11,14 @@ import { ArrowLeft, Send, Copy, ExternalLink } from "lucide-react"
 import { TransactionTable } from "@/components/dashboard/transaction-table"
 import { SendTransactionDialog } from "@/components/dashboard/send-transaction-dialog"
 import { toast } from "sonner"
-import type { Wallet, Transaction } from "@/store/dashboard-store"
+import type { Transaction } from "@/components/dashboard/transaction-table"
+
+interface Wallet {
+  address: string
+  deployed: boolean
+  email: string
+  createdAt: string
+}
 
 export default function WalletDetailPage() {
   const params = useParams()

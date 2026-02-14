@@ -1,29 +1,14 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
+import { useQuery } from 'convex/react'
+import { api } from '../../../../convex/_generated/api'
+import { useProject } from '@/hooks/use-project'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { FileText, Filter, RefreshCw } from "lucide-react"
-
-type LogEntry = {
-  id: string
-  timestamp: string
-  method: string
-  path: string
-  statusCode: number
-  duration: number
-  apiKeyPrefix: string
-}
-
-type LogStats = {
-  total: number
-  successCount: number
-  errorCount: number
-  avgDuration: number
-}
 
 function getStatusBadge(statusCode: number) {
   if (statusCode >= 200 && statusCode < 300) {
@@ -49,8 +34,8 @@ function getMethodBadge(method: string) {
   )
 }
 
-function formatTimestamp(iso: string) {
-  const date = new Date(iso)
+function formatTimestamp(creationTime: number) {
+  const date = new Date(creationTime)
   return date.toLocaleTimeString('en-US', {
     hour: '2-digit',
     minute: '2-digit',
@@ -67,40 +52,24 @@ function formatDuration(ms: number) {
 type StatusFilter = 'all' | 'success' | 'error'
 
 export default function LogsPage() {
-  const [logs, setLogs] = useState<LogEntry[]>([])
-  const [stats, setStats] = useState<LogStats>({ total: 0, successCount: 0, errorCount: 0, avgDuration: 0 })
+  const { projectId } = useProject()
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  const [autoRefresh, setAutoRefresh] = useState(false)
-  const [lastRefreshed, setLastRefreshed] = useState(new Date())
-  const [isLoading, setIsLoading] = useState(true)
 
-  const fetchLogs = useCallback(async () => {
-    try {
-      const res = await fetch('/api/logs')
-      if (res.ok) {
-        const data = await res.json()
-        setLogs(data.logs)
-        setStats(data.stats)
-      }
-    } catch {
-      // ignore
-    } finally {
-      setIsLoading(false)
-    }
-    setLastRefreshed(new Date())
-  }, [])
+  const logs = useQuery(
+    api.requestLogs.getMyRecentLogs,
+    projectId ? { projectId } : 'skip'
+  )
 
-  useEffect(() => {
-    fetchLogs()
-  }, [fetchLogs])
+  const stats = useQuery(
+    api.requestLogs.getMyLogStats,
+    projectId ? { projectId } : 'skip'
+  )
 
-  useEffect(() => {
-    if (!autoRefresh) return
-    const interval = setInterval(fetchLogs, 5000)
-    return () => clearInterval(interval)
-  }, [autoRefresh, fetchLogs])
+  const isLoading = logs === undefined || stats === undefined
+  const logList = logs ?? []
+  const logStats = stats ?? { total: 0, successCount: 0, errorCount: 0, avgDuration: 0 }
 
-  const filteredLogs = logs.filter((log) => {
+  const filteredLogs = logList.filter((log) => {
     if (statusFilter === 'all') return true
     if (statusFilter === 'success') return log.statusCode >= 200 && log.statusCode < 400
     if (statusFilter === 'error') return log.statusCode >= 400
@@ -114,19 +83,6 @@ export default function LogsPage() {
           <h1 className="text-3xl font-bold">Request Logs</h1>
           <p className="text-muted-foreground mt-1">Monitor API requests in real time</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant={autoRefresh ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setAutoRefresh(!autoRefresh)}
-          >
-            <RefreshCw className={`h-4 w-4 mr-2 ${autoRefresh ? 'animate-spin' : ''}`} />
-            {autoRefresh ? 'Auto-refreshing' : 'Auto-refresh'}
-          </Button>
-          <Button variant="outline" size="sm" onClick={fetchLogs}>
-            <RefreshCw className="h-4 w-4" />
-          </Button>
-        </div>
       </div>
 
       {/* Summary Cards */}
@@ -137,7 +93,7 @@ export default function LogsPage() {
             <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{stats.total}</div>
+            <div className="text-3xl font-bold">{logStats.total}</div>
             <p className="text-xs text-muted-foreground mt-1">All time</p>
           </CardContent>
         </Card>
@@ -148,13 +104,13 @@ export default function LogsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">
-              <span className="text-emerald-600">{stats.successCount}</span>
+              <span className="text-emerald-600">{logStats.successCount}</span>
               <span className="text-muted-foreground mx-1">/</span>
-              <span className="text-red-500">{stats.errorCount}</span>
+              <span className="text-red-500">{logStats.errorCount}</span>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              {stats.total > 0
-                ? `${((stats.successCount / stats.total) * 100).toFixed(0)}% success rate`
+              {logStats.total > 0
+                ? `${((logStats.successCount / logStats.total) * 100).toFixed(0)}% success rate`
                 : 'No data yet'}
             </p>
           </CardContent>
@@ -165,7 +121,7 @@ export default function LogsPage() {
             <RefreshCw className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{formatDuration(stats.avgDuration)}</div>
+            <div className="text-3xl font-bold">{formatDuration(logStats.avgDuration)}</div>
             <p className="text-xs text-muted-foreground mt-1">Across all endpoints</p>
           </CardContent>
         </Card>
@@ -178,7 +134,7 @@ export default function LogsPage() {
             <div>
               <CardTitle>Recent Requests</CardTitle>
               <CardDescription>
-                Last refreshed at {lastRefreshed.toLocaleTimeString()}
+                Real-time log data via Convex
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
@@ -218,9 +174,9 @@ export default function LogsPage() {
               </TableHeader>
               <TableBody>
                 {filteredLogs.map((log) => (
-                  <TableRow key={log.id}>
+                  <TableRow key={log._id}>
                     <TableCell className="font-mono text-xs text-muted-foreground">
-                      {formatTimestamp(log.timestamp)}
+                      {formatTimestamp(log._creationTime)}
                     </TableCell>
                     <TableCell>{getMethodBadge(log.method)}</TableCell>
                     <TableCell className="font-mono text-sm">{log.path}</TableCell>
@@ -238,7 +194,7 @@ export default function LogsPage() {
                 {filteredLogs.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                      {logs.length === 0
+                      {logList.length === 0
                         ? 'No request logs yet. Logs will appear when API requests are made.'
                         : 'No requests match the current filter.'}
                     </TableCell>

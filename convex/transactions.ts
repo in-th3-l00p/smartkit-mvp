@@ -1,22 +1,59 @@
 import { query, mutation, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
+
+// ---------------------------------------------------------------------------
+// Helper: verify the authenticated user owns the project
+// ---------------------------------------------------------------------------
+
+async function verifyOwnership(
+  ctx: { db: any },
+  userId: any,
+  projectId: any
+) {
+  const project = await ctx.db.get(projectId);
+  if (!project || project.ownerId !== userId) {
+    throw new Error("Not authorized");
+  }
+  return project;
+}
+
+// ---------------------------------------------------------------------------
+// Auth-checked queries (dashboard)
+// ---------------------------------------------------------------------------
+
+export const getMyTransactions = query({
+  args: { projectId: v.id("projects") },
+  handler: async (ctx, { projectId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    await verifyOwnership(ctx, userId, projectId);
+    return ctx.db
+      .query("transactions")
+      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+      .order("desc")
+      .collect();
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Server-side queries (used by API routes via ConvexHttpClient)
+// ---------------------------------------------------------------------------
 
 export const getTransactionByHash = query({
   args: { projectId: v.id("projects"), hash: v.string() },
   handler: async (ctx, { projectId, hash }) => {
-    // Try userOpHash first
     const byUserOp = await ctx.db
       .query("transactions")
       .withIndex("by_userOpHash", (q) => q.eq("userOpHash", hash))
       .first();
     if (byUserOp && byUserOp.projectId === projectId) return byUserOp;
 
-    // Try txHash
     const all = await ctx.db
       .query("transactions")
       .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
       .collect();
-    return all.find((t) => t.txHash === hash) ?? null;
+    return all.find((t: any) => t.txHash === hash) ?? null;
   },
 });
 
@@ -27,7 +64,7 @@ export const getTransactions = query({
   },
   handler: async (ctx, { projectId, walletAddress }) => {
     if (walletAddress) {
-      const results = await ctx.db
+      return ctx.db
         .query("transactions")
         .withIndex("by_projectId_walletAddress", (q) =>
           q
@@ -36,7 +73,6 @@ export const getTransactions = query({
         )
         .order("desc")
         .collect();
-      return results;
     }
     return ctx.db
       .query("transactions")
@@ -82,12 +118,16 @@ export const getRecentUpdated = query({
         .take(20);
     }
     return txs.filter(
-      (tx) =>
+      (tx: any) =>
         (tx.status === "success" || tx.status === "failed") &&
         tx._creationTime > afterTimestamp
     );
   },
 });
+
+// ---------------------------------------------------------------------------
+// Mutations (server-side)
+// ---------------------------------------------------------------------------
 
 export const createTransaction = mutation({
   args: {

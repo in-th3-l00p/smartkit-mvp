@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
-import { useDashboardStore } from "@/store/dashboard-store"
 
 interface CreateWalletDialogProps {
   open: boolean
@@ -17,8 +16,6 @@ export function CreateWalletDialog({ open, onOpenChange }: CreateWalletDialogPro
   const [email, setEmail] = useState('')
   const [userId, setUserId] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const addWallet = useDashboardStore((s) => s.addWallet)
-
   const handleCreate = async () => {
     if (!email || !userId) {
       toast.error('Please fill in all fields')
@@ -36,7 +33,6 @@ export function CreateWalletDialog({ open, onOpenChange }: CreateWalletDialogPro
 
       if (!res.ok) throw new Error(wallet.error)
 
-      addWallet(wallet)
       toast.success('Wallet created!', {
         description: `Address: ${wallet.address.slice(0, 10)}...`,
       })

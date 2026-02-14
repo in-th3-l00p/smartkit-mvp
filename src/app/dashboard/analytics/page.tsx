@@ -148,34 +148,9 @@ export default function AnalyticsPage() {
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    let cancelled = false
-
-    async function fetchData() {
-      try {
-        const res = await fetch('/api/stats')
-        if (!res.ok) throw new Error('API error')
-        const json = await res.json()
-
-        // If the API returns analytics-shaped data, use it
-        if (!cancelled && json.daily && json.stats) {
-          setData(json as AnalyticsData)
-        } else {
-          throw new Error('Unexpected shape')
-        }
-      } catch {
-        // Fall back to realistic demo data
-        if (!cancelled) {
-          setData(generateDemoData())
-        }
-      } finally {
-        if (!cancelled) setIsLoading(false)
-      }
-    }
-
-    fetchData()
-    return () => {
-      cancelled = true
-    }
+    // Use demo data for analytics charts (real-time stats are on the dashboard)
+    setData(generateDemoData())
+    setIsLoading(false)
   }, [])
 
   if (isLoading || !data) {

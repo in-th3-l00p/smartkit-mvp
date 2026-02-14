@@ -1,20 +1,73 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
 
-export const getProjectByEmail = query({
-  args: { email: v.string() },
-  handler: async (ctx, { email }) => {
+// ---------------------------------------------------------------------------
+// Auth-checked queries (dashboard)
+// ---------------------------------------------------------------------------
+
+export const getMyProject = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
     return ctx.db
       .query("projects")
-      .withIndex("by_ownerEmail", (q) => q.eq("ownerEmail", email))
+      .withIndex("by_ownerId", (q) => q.eq("ownerId", userId))
       .first();
   },
 });
+
+// ---------------------------------------------------------------------------
+// Auth-checked mutations (dashboard)
+// ---------------------------------------------------------------------------
+
+export const createProject = mutation({
+  args: { name: v.string() },
+  handler: async (ctx, { name }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const id = await ctx.db.insert("projects", {
+      name,
+      ownerId: userId,
+    });
+    return ctx.db.get(id);
+  },
+});
+
+export const updateProjectName = mutation({
+  args: { id: v.id("projects"), name: v.string() },
+  handler: async (ctx, { id, name }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const project = await ctx.db.get(id);
+    if (!project || project.ownerId !== userId) {
+      throw new Error("Not authorized");
+    }
+    await ctx.db.patch(id, { name });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Server-side queries (used by API routes via ConvexHttpClient)
+// ---------------------------------------------------------------------------
 
 export const getProjectById = query({
   args: { id: v.id("projects") },
   handler: async (ctx, { id }) => {
     return ctx.db.get(id);
+  },
+});
+
+export const getProjectByStripeCustomerId = query({
+  args: { stripeCustomerId: v.string() },
+  handler: async (ctx, { stripeCustomerId }) => {
+    return ctx.db
+      .query("projects")
+      .withIndex("by_stripeCustomerId", (q) =>
+        q.eq("stripeCustomerId", stripeCustomerId)
+      )
+      .first();
   },
 });
 
@@ -25,21 +78,9 @@ export const healthCheck = query({
   },
 });
 
-export const createProject = mutation({
-  args: {
-    name: v.string(),
-    ownerEmail: v.string(),
-    passwordHash: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const id = await ctx.db.insert("projects", {
-      name: args.name,
-      ownerEmail: args.ownerEmail,
-      passwordHash: args.passwordHash,
-    });
-    return ctx.db.get(id);
-  },
-});
+// ---------------------------------------------------------------------------
+// Server-side mutations (billing webhooks, etc.)
+// ---------------------------------------------------------------------------
 
 export const updateProjectBilling = mutation({
   args: {
@@ -56,24 +97,5 @@ export const updateProjectBilling = mutation({
       update.stripeSubscriptionId = fields.stripeSubscriptionId;
     if (fields.planTier !== undefined) update.planTier = fields.planTier;
     await ctx.db.patch(id, update);
-  },
-});
-
-export const updateProjectName = mutation({
-  args: { id: v.id("projects"), name: v.string() },
-  handler: async (ctx, { id, name }) => {
-    await ctx.db.patch(id, { name });
-  },
-});
-
-export const getProjectByStripeCustomerId = query({
-  args: { stripeCustomerId: v.string() },
-  handler: async (ctx, { stripeCustomerId }) => {
-    return ctx.db
-      .query("projects")
-      .withIndex("by_stripeCustomerId", (q) =>
-        q.eq("stripeCustomerId", stripeCustomerId)
-      )
-      .first();
   },
 });
