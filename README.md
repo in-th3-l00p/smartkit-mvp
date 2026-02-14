@@ -1,36 +1,156 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SmartKit MVP
 
-## Getting Started
+The easiest way to add ERC-4337 smart wallets to your app.
 
-First, run the development server:
+## Quick Start
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install @smartkit/sdk
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+```typescript
+import SmartKit from '@smartkit/sdk'
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+const smartkit = new SmartKit({ apiKey: 'sk_test_...' })
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+// Create a smart wallet
+const wallet = await smartkit.createWallet({
+  userId: 'user_123',
+  email: 'user@example.com'
+})
 
-## Learn More
+// Send a gasless transaction
+const tx = await smartkit.sendTransaction({
+  walletAddress: wallet.address,
+  to: '0x...',
+  value: '0',
+  data: '0x',
+  sponsored: true
+})
 
-To learn more about Next.js, take a look at the following resources:
+// Wait for confirmation
+const result = await smartkit.waitForTransaction(tx.userOpHash)
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Features
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **5-minute integration** - Simple SDK with TypeScript support
+- **Gasless transactions** - Built-in paymaster sponsorship
+- **Smart wallets** - ERC-4337 smart contract wallets with deterministic addresses
+- **Developer dashboard** - Monitor wallets, transactions, and gas usage
+- **Social recovery** - Account recovery via trusted guardians
+- **Multi-chain ready** - Built on Base Sepolia, extensible to other L2s
 
-## Deploy on Vercel
+## Architecture
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+smartkit-mvp/
+├── src/
+│   ├── app/                    # Next.js App Router
+│   │   ├── api/                # REST API routes
+│   │   │   ├── wallets/        # Wallet CRUD
+│   │   │   ├── transactions/   # Transaction management
+│   │   │   ├── stats/          # Dashboard analytics
+│   │   │   └── keys/           # API key management
+│   │   ├── dashboard/          # Dashboard UI pages
+│   │   ├── docs/               # Documentation page
+│   │   └── page.tsx            # Landing page
+│   ├── components/             # React components
+│   │   ├── ui/                 # shadcn/ui components
+│   │   └── dashboard/          # Dashboard-specific components
+│   ├── lib/                    # Core business logic
+│   │   ├── smart-wallet.ts     # Wallet & transaction service
+│   │   ├── config.ts           # Chain & contract config
+│   │   └── db/schema.ts        # Database (in-memory for MVP)
+│   ├── store/                  # Zustand state management
+│   └── hooks/                  # React hooks
+├── contracts/                  # Solidity smart contracts
+│   └── src/
+│       ├── SimpleAccount.sol           # ERC-4337 smart wallet
+│       ├── SimpleAccountFactory.sol    # CREATE2 factory
+│       └── TestPaymaster.sol           # Gas sponsorship
+├── packages/smartkit-sdk/      # npm SDK package
+├── examples/demo-app/          # Demo integration app
+├── tests/                      # Test suites
+│   └── unit/                   # Unit tests (Vitest)
+└── docs/                       # Documentation
+    ├── api.md                  # API reference
+    └── quickstart.md           # Getting started guide
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Tech Stack
+
+- **Frontend**: Next.js 14 (App Router) + shadcn/ui + TailwindCSS
+- **Backend**: Next.js API Routes
+- **Blockchain**: Base Sepolia (ERC-4337 v0.7)
+- **Smart Contracts**: Solidity 0.8.24 (Foundry)
+- **State Management**: Zustand
+- **Testing**: Vitest
+- **Language**: TypeScript (strict mode)
+
+## Development
+
+```bash
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
+
+# Run tests
+npm test
+
+# Type check
+npx tsc --noEmit
+
+# Build for production
+npm run build
+```
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/wallets/create` | Create a new smart wallet |
+| GET | `/api/wallets` | List all wallets |
+| GET | `/api/wallets/:address` | Get wallet details + transactions |
+| POST | `/api/transactions/send` | Send a gasless transaction |
+| GET | `/api/transactions` | List all transactions |
+| GET | `/api/transactions/:hash` | Get transaction status |
+| GET | `/api/stats` | Dashboard statistics |
+| GET/POST | `/api/keys` | Manage API keys |
+
+## Smart Contracts
+
+ERC-4337 Account Abstraction contracts for Base Sepolia:
+
+- **SimpleAccount** - Smart wallet with owner-based auth and execute/executeBatch
+- **SimpleAccountFactory** - CREATE2 factory with EIP-1167 minimal proxy pattern
+- **TestPaymaster** - Whitelist-based gas sponsorship paymaster
+
+## Environment Variables
+
+Copy `.env.example` to `.env.local`:
+
+```bash
+cp .env.example .env.local
+```
+
+See `.env.example` for all required variables.
+
+## Testing
+
+```bash
+# Run all unit tests
+npm test
+
+# Watch mode
+npm run test:watch
+
+# With coverage
+npm run test:coverage
+```
+
+## License
+
+MIT

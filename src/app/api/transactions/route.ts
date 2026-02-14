@@ -1,0 +1,14 @@
+import { NextResponse } from 'next/server'
+import { walletService } from '@/lib/smart-wallet'
+
+export async function GET() {
+  try {
+    const transactions = await walletService.getTransactions()
+    return NextResponse.json(transactions)
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Failed to fetch transactions' },
+      { status: 500 }
+    )
+  }
+}
