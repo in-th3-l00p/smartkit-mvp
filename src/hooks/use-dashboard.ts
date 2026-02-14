@@ -3,6 +3,28 @@
 import { useEffect } from 'react'
 import { useDashboardStore } from '@/store/dashboard-store'
 
+async function fetchJson<T>(url: string, fallback: T): Promise<T> {
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return fallback
+    const contentType = res.headers.get('content-type')
+    if (!contentType?.includes('application/json')) return fallback
+    return await res.json()
+  } catch {
+    return fallback
+  }
+}
+
+const defaultStats = {
+  totalWallets: 0,
+  totalTransactions: 0,
+  successfulTxs: 0,
+  failedTxs: 0,
+  pendingTxs: 0,
+  totalGasSponsored: '0',
+  successRate: '0%',
+}
+
 export function useDashboard() {
   const store = useDashboardStore()
 
@@ -10,17 +32,11 @@ export function useDashboard() {
     async function fetchData() {
       store.setLoading(true)
       try {
-        const [walletsRes, txsRes, statsRes, keysRes] = await Promise.all([
-          fetch('/api/wallets'),
-          fetch('/api/transactions'),
-          fetch('/api/stats'),
-          fetch('/api/keys'),
-        ])
         const [wallets, transactions, stats, apiKeys] = await Promise.all([
-          walletsRes.json(),
-          txsRes.json(),
-          statsRes.json(),
-          keysRes.json(),
+          fetchJson('/api/wallets', []),
+          fetchJson('/api/transactions', []),
+          fetchJson('/api/stats', defaultStats),
+          fetchJson('/api/keys', []),
         ])
         store.setWallets(wallets)
         store.setTransactions(transactions)
