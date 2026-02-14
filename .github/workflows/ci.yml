@@ -44,9 +44,8 @@ jobs:
         working-directory: contracts
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
       - uses: foundry-rs/foundry-toolchain@v1
+      - run: forge soldeer install
       - run: forge build
       - run: forge test -v
       - run: forge coverage --report summary
@@ -63,5 +62,5 @@ jobs:
       - run: npm ci
       - run: npm run build
         env:
-          DATABASE_URL: postgresql://fake:fake@localhost/fake
+          NEXT_PUBLIC_CONVEX_URL: https://placeholder.convex.cloud
           SKIP_ENV_VALIDATION: true

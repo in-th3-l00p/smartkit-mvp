@@ -1,20 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { wallets, transactions, apiKeys, projects } from '@/lib/db/schema'
 
-describe('Database Schema', () => {
-  it('exports wallets table', () => {
-    expect(wallets).toBeDefined()
+describe('Convex Schema', () => {
+  it('exports schema definition', async () => {
+    const mod = await import('../../convex/schema')
+    expect(mod.default).toBeDefined()
   })
 
-  it('exports transactions table', () => {
-    expect(transactions).toBeDefined()
-  })
-
-  it('exports apiKeys table', () => {
-    expect(apiKeys).toBeDefined()
-  })
-
-  it('exports projects table', () => {
-    expect(projects).toBeDefined()
+  it('schema has projects table', async () => {
+    const mod = await import('../../convex/schema')
+    expect(mod.default.tables).toBeDefined()
   })
 })

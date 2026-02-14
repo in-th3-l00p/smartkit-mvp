@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { stripe, tierForPriceId } from '@/lib/billing/stripe'
+import { getConvexClient } from '@/lib/convex'
+import { api } from '../../../../../convex/_generated/api'
+import type { Id } from '../../../../../convex/_generated/dataModel'
 import { logger } from '@/lib/logger'
 import type Stripe from 'stripe'
-
-// Stripe sends the raw body, so we must NOT parse it as JSON ourselves.
-// Next.js App Router provides `request.text()` for this purpose.
 
 export async function POST(request: NextRequest) {
   const body = await request.text()
@@ -39,6 +39,8 @@ export async function POST(request: NextRequest) {
     'Stripe webhook event received'
   )
 
+  const convex = getConvexClient()
+
   try {
     switch (event.type) {
       // -----------------------------------------------------------------
@@ -55,8 +57,13 @@ export async function POST(request: NextRequest) {
           'Checkout session completed — subscription created'
         )
 
-        // TODO: persist the customer <-> project mapping in the database
-        // e.g. await db.update(projects).set({ stripeCustomerId: customerId, stripeSubscriptionId: subscriptionId }).where(eq(projects.id, projectId))
+        if (projectId) {
+          await convex.mutation(api.projects.updateProjectBilling, {
+            id: projectId as Id<"projects">,
+            stripeCustomerId: customerId,
+            stripeSubscriptionId: subscriptionId,
+          })
+        }
         break
       }
 
@@ -79,7 +86,13 @@ export async function POST(request: NextRequest) {
           'Subscription updated'
         )
 
-        // TODO: update the project's plan tier in the database
+        if (projectId) {
+          await convex.mutation(api.projects.updateProjectBilling, {
+            id: projectId as Id<"projects">,
+            stripeSubscriptionId: subscription.id,
+            planTier: tier,
+          })
+        }
         break
       }
 
@@ -95,7 +108,13 @@ export async function POST(request: NextRequest) {
           'Subscription deleted — reverting to free tier'
         )
 
-        // TODO: revert the project to the free tier in the database
+        if (projectId) {
+          await convex.mutation(api.projects.updateProjectBilling, {
+            id: projectId as Id<"projects">,
+            planTier: 'free',
+            stripeSubscriptionId: undefined,
+          })
+        }
         break
       }
 
@@ -133,9 +152,6 @@ export async function POST(request: NextRequest) {
           },
           'Invoice payment failed'
         )
-
-        // TODO: notify the project owner about the payment failure
-        // TODO: consider downgrading after repeated failures
         break
       }
 

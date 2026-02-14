@@ -1,14 +1,14 @@
 import { NextRequest } from 'next/server'
 import { authenticateApiKey } from '@/lib/auth/middleware'
-import { db } from '@/lib/db/drizzle'
-import { transactions } from '@/lib/db/schema'
-import { eq, and, or } from 'drizzle-orm'
+import { getConvexClient } from '@/lib/convex'
+import { api } from '../../../../../convex/_generated/api'
+import type { Id } from '../../../../../convex/_generated/dataModel'
 
 export async function GET(request: NextRequest) {
   const auth = await authenticateApiKey(request)
   if (!auth.success) return auth.response
 
-  const projectId = auth.context.projectId
+  const projectId = auth.context.projectId as Id<"projects">
   const walletAddress = request.nextUrl.searchParams.get('walletAddress')
 
   const encoder = new TextEncoder()
@@ -24,30 +24,22 @@ export async function GET(request: NextRequest) {
       send('connected', { timestamp: new Date().toISOString() })
 
       // Poll for updates every 2 seconds
-      let lastChecked = new Date()
+      let lastChecked = Date.now()
       const interval = setInterval(async () => {
         try {
-          const conditions = [eq(transactions.projectId, projectId)]
-          if (walletAddress) {
-            conditions.push(eq(transactions.walletAddress, walletAddress))
-          }
-
-          // Find transactions updated since last check (status changed)
-          const recent = await db
-            .select()
-            .from(transactions)
-            .where(and(...conditions))
-            .limit(20)
-
-          const updated = recent.filter(
-            (tx) =>
-              (tx.status === 'success' || tx.status === 'failed') &&
-              tx.createdAt > lastChecked
+          const convex = getConvexClient()
+          const updated = await convex.query(
+            api.transactions.getRecentUpdated,
+            {
+              projectId,
+              walletAddress: walletAddress ?? undefined,
+              afterTimestamp: lastChecked,
+            }
           )
 
           for (const tx of updated) {
             send('transaction', {
-              id: tx.id,
+              id: tx._id,
               userOpHash: tx.userOpHash,
               txHash: tx.txHash,
               status: tx.status,
@@ -55,7 +47,7 @@ export async function GET(request: NextRequest) {
             })
           }
 
-          lastChecked = new Date()
+          lastChecked = Date.now()
 
           // Send keepalive
           send('ping', { timestamp: new Date().toISOString() })

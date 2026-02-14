@@ -1,13 +1,8 @@
-import { createPublicClient, http, formatEther, type PublicClient } from 'viem'
+import { createPublicClient, http, formatEther } from 'viem'
 import { config } from './config'
-import { db } from './db/drizzle'
-import {
-  wallets,
-  transactions,
-  type Wallet,
-  type Transaction,
-} from './db/schema'
-import { eq, and, sql, or, ilike, desc, count } from 'drizzle-orm'
+import { getConvexClient } from './convex'
+import { api } from '../../convex/_generated/api'
+import type { Id } from '../../convex/_generated/dataModel'
 import {
   getCounterfactualAddress,
   buildInitCode,
@@ -26,18 +21,22 @@ const publicClient = createPublicClient({
 })
 
 export class SmartWalletService {
+  private get convex() {
+    return getConvexClient()
+  }
+
   async createWallet(
     projectId: string,
     userId: string,
     email: string
-  ): Promise<Wallet> {
-    // Check if user already has wallet in this project
-    const [existing] = await db
-      .select()
-      .from(wallets)
-      .where(and(eq(wallets.projectId, projectId), eq(wallets.userId, userId)))
-      .limit(1)
+  ) {
+    const pid = projectId as Id<"projects">
 
+    // Check if user already has wallet in this project
+    const existing = await this.convex.query(
+      api.wallets.getWalletByProjectAndUser,
+      { projectId: pid, userId }
+    )
     if (existing) return existing
 
     // Generate deterministic salt from userId
@@ -46,42 +45,30 @@ export class SmartWalletService {
     // Compute counterfactual address via factory contract
     const address = await getCounterfactualAddress(salt)
 
-    const [wallet] = await db
-      .insert(wallets)
-      .values({
-        projectId,
-        address,
-        userId,
-        email,
-        salt: salt.toString(),
-        deployed: false,
-      })
-      .returning()
+    const wallet = await this.convex.mutation(api.wallets.createWallet, {
+      projectId: pid,
+      address,
+      userId,
+      email,
+      salt: salt.toString(),
+      chainId: 84532,
+      deployed: false,
+    })
 
     return wallet
   }
 
-  async getWallet(
-    projectId: string,
-    address: string
-  ): Promise<Wallet | undefined> {
-    const [wallet] = await db
-      .select()
-      .from(wallets)
-      .where(
-        and(eq(wallets.projectId, projectId), ilike(wallets.address, address))
-      )
-      .limit(1)
-
-    return wallet
+  async getWallet(projectId: string, address: string) {
+    const pid = projectId as Id<"projects">
+    return this.convex.query(api.wallets.getWalletByProjectAndAddress, {
+      projectId: pid,
+      address: address.toLowerCase(),
+    })
   }
 
-  async getAllWallets(projectId: string): Promise<Wallet[]> {
-    return db
-      .select()
-      .from(wallets)
-      .where(eq(wallets.projectId, projectId))
-      .orderBy(desc(wallets.createdAt))
+  async getAllWallets(projectId: string) {
+    const pid = projectId as Id<"projects">
+    return this.convex.query(api.wallets.getAllWallets, { projectId: pid })
   }
 
   async sendTransaction(
@@ -93,7 +80,8 @@ export class SmartWalletService {
       data: string
       sponsored?: boolean
     }
-  ): Promise<Transaction> {
+  ) {
+    const pid = projectId as Id<"projects">
     const wallet = await this.getWallet(projectId, params.walletAddress)
     if (!wallet) {
       throw new Error('Wallet not found')
@@ -179,7 +167,6 @@ export class SmartWalletService {
     }
 
     // Sign the UserOp hash
-    // The bundler will compute the hash; we sign the hash of the packed UserOp
     const userOpHashForSigning = this.computeUserOpHash(userOp)
     const signature = await signUserOpHash(userOpHashForSigning)
     userOp.signature = signature
@@ -188,30 +175,29 @@ export class SmartWalletService {
     const userOpHash = await sendUserOperation(bundlerClient, userOp)
 
     // Store transaction in DB as pending
-    const [tx] = await db
-      .insert(transactions)
-      .values({
-        projectId,
-        walletAddress: sender,
-        userOpHash,
-        to: target,
-        value: params.value || '0',
-        data: params.data || '0x',
-        status: 'pending',
-        gasSponsored: sponsored,
-      })
-      .returning()
+    const tx = await this.convex.mutation(api.transactions.createTransaction, {
+      projectId: pid,
+      walletAddress: sender,
+      userOpHash,
+      to: target,
+      value: params.value || '0',
+      data: params.data || '0x',
+      status: 'pending',
+      chainId: 84532,
+      gasSponsored: sponsored,
+    })
 
     // Update wallet deployed status if it was first tx
     if (!deployed) {
-      await db
-        .update(wallets)
-        .set({ deployed: true })
-        .where(eq(wallets.id, wallet.id))
+      await this.convex.mutation(api.wallets.markWalletDeployed, {
+        walletId: wallet._id,
+      })
     }
 
     // Poll for receipt in background
-    this.pollForReceipt(tx.id, userOpHash, bundlerClient)
+    if (tx) {
+      this.pollForReceipt(tx._id, userOpHash as `0x${string}`, bundlerClient)
+    }
 
     return tx
   }
@@ -228,23 +214,20 @@ export class SmartWalletService {
       const result = await getUserOperationReceipt(bundlerClient, userOpHash)
 
       if (result.receipt) {
-        await db
-          .update(transactions)
-          .set({
-            txHash: result.receipt.transactionHash,
-            status: result.success ? 'success' : 'failed',
-            gasCost: formatEther(result.receipt.gasUsed),
-          })
-          .where(eq(transactions.id, txId))
+        await this.convex.mutation(api.transactions.updateTransactionReceipt, {
+          txId: txId as Id<"transactions">,
+          txHash: result.receipt.transactionHash,
+          status: result.success ? 'success' : 'failed',
+          gasCost: formatEther(result.receipt.gasUsed),
+        })
         return
       }
     }
 
     // Timeout — mark as failed
-    await db
-      .update(transactions)
-      .set({ status: 'failed' })
-      .where(eq(transactions.id, txId))
+    await this.convex.mutation(api.transactions.markTransactionFailed, {
+      txId: txId as Id<"transactions">,
+    })
   }
 
   private computeUserOpHash(userOp: {
@@ -260,9 +243,7 @@ export class SmartWalletService {
     paymasterAndData: `0x${string}`
     signature: `0x${string}`
   }): `0x${string}` {
-    // Simplified: the bundler computes the actual hash server-side.
-    // We sign the keccak256 of the packed user operation fields.
-    const { keccak256, encodePacked, encodeAbiParameters } = require('viem')
+    const { keccak256, encodeAbiParameters } = require('viem')
     const packed = encodeAbiParameters(
       [
         { type: 'address' },
@@ -279,10 +260,8 @@ export class SmartWalletService {
         userOp.nonce,
         keccak256(userOp.initCode),
         keccak256(userOp.callData),
-        // Pack gas limits: verificationGasLimit | callGasLimit
         (userOp.verificationGasLimit << 128n) | userOp.callGasLimit,
         userOp.preVerificationGas,
-        // Pack gas fees: maxPriorityFeePerGas | maxFeePerGas
         (userOp.maxPriorityFeePerGas << 128n) | userOp.maxFeePerGas,
         keccak256(userOp.paymasterAndData),
       ]
@@ -297,53 +276,33 @@ export class SmartWalletService {
     return finalHash
   }
 
-  async getTransaction(
-    projectId: string,
-    hash: string
-  ): Promise<Transaction | undefined> {
-    const [tx] = await db
-      .select()
-      .from(transactions)
-      .where(
-        and(
-          eq(transactions.projectId, projectId),
-          or(
-            eq(transactions.userOpHash, hash),
-            eq(transactions.txHash, hash)
-          )
-        )
-      )
-      .limit(1)
-
-    return tx
+  async getTransaction(projectId: string, hash: string) {
+    const pid = projectId as Id<"projects">
+    return this.convex.query(api.transactions.getTransactionByHash, {
+      projectId: pid,
+      hash,
+    })
   }
 
-  async getTransactions(
-    projectId: string,
-    walletAddress?: string
-  ): Promise<Transaction[]> {
-    const conditions = [eq(transactions.projectId, projectId)]
-    if (walletAddress) {
-      conditions.push(ilike(transactions.walletAddress, walletAddress))
-    }
-
-    return db
-      .select()
-      .from(transactions)
-      .where(and(...conditions))
-      .orderBy(desc(transactions.createdAt))
+  async getTransactions(projectId: string, walletAddress?: string) {
+    const pid = projectId as Id<"projects">
+    return this.convex.query(api.transactions.getTransactions, {
+      projectId: pid,
+      walletAddress,
+    })
   }
 
   async getStats(projectId: string) {
-    const [walletCount] = await db
-      .select({ count: count() })
-      .from(wallets)
-      .where(eq(wallets.projectId, projectId))
+    const pid = projectId as Id<"projects">
 
-    const txRows = await db
-      .select()
-      .from(transactions)
-      .where(eq(transactions.projectId, projectId))
+    const totalWallets = await this.convex.query(api.wallets.getWalletCount, {
+      projectId: pid,
+    })
+
+    const txRows = await this.convex.query(
+      api.transactions.getTransactionsByProject,
+      { projectId: pid }
+    )
 
     const totalTransactions = txRows.length
     const successfulTxs = txRows.filter((t) => t.status === 'success').length
@@ -357,7 +316,7 @@ export class SmartWalletService {
       .toFixed(4)
 
     return {
-      totalWallets: walletCount.count,
+      totalWallets,
       totalTransactions,
       successfulTxs,
       failedTxs,

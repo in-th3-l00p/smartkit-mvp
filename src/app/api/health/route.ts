@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db/drizzle'
-import { sql } from 'drizzle-orm'
+import { getConvexClient } from '@/lib/convex'
+import { api } from '../../../../convex/_generated/api'
 
 export async function GET() {
   const checks: Record<string, { status: string; latency?: number }> = {}
 
-  // Database check
+  // Database check (Convex)
   const dbStart = Date.now()
   try {
-    await db.execute(sql`SELECT 1`)
+    const convex = getConvexClient()
+    await convex.query(api.projects.healthCheck, {})
     checks.database = { status: 'healthy', latency: Date.now() - dbStart }
   } catch {
     checks.database = { status: 'unhealthy', latency: Date.now() - dbStart }

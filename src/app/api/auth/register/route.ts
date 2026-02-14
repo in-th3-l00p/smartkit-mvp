@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db/drizzle'
-import { projects, apiKeys } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { getConvexClient } from '@/lib/convex'
+import { api } from '../../../../../convex/_generated/api'
 import { validateBody } from '@/lib/validation/validate'
 import { registerSchema } from '@/lib/validation/schemas'
 import { createSession, setSessionCookie } from '@/lib/auth/session'
@@ -29,12 +28,12 @@ export async function POST(request: NextRequest) {
   const { email, password, projectName } = validation.data
 
   try {
+    const convex = getConvexClient()
+
     // Check if email already exists
-    const [existing] = await db
-      .select({ id: projects.id })
-      .from(projects)
-      .where(eq(projects.ownerEmail, email))
-      .limit(1)
+    const existing = await convex.query(api.projects.getProjectByEmail, {
+      email,
+    })
 
     if (existing) {
       return NextResponse.json(
@@ -46,21 +45,25 @@ export async function POST(request: NextRequest) {
     const passwordHash = await hashPassword(password)
 
     // Create project
-    const [project] = await db
-      .insert(projects)
-      .values({
-        name: projectName,
-        ownerEmail: email,
-        passwordHash,
-      })
-      .returning()
+    const project = await convex.mutation(api.projects.createProject, {
+      name: projectName,
+      ownerEmail: email,
+      passwordHash,
+    })
+
+    if (!project) {
+      return NextResponse.json(
+        { error: 'Failed to create project' },
+        { status: 500 }
+      )
+    }
 
     // Auto-create a default API key
     const rawKey = `sk_test_${uuidv4().replace(/-/g, '')}`
     const keyHash = await hashApiKey(rawKey)
 
-    await db.insert(apiKeys).values({
-      projectId: project.id,
+    await convex.mutation(api.apiKeys.createApiKey, {
+      projectId: project._id,
       keyHash,
       keyPrefix: rawKey.slice(0, 12),
       name: 'Default Key',
@@ -68,7 +71,7 @@ export async function POST(request: NextRequest) {
 
     // Set session
     const token = await createSession({
-      projectId: project.id,
+      projectId: project._id,
       email: project.ownerEmail,
     })
     await setSessionCookie(token)
@@ -76,7 +79,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         project: {
-          id: project.id,
+          id: project._id,
           name: project.name,
           email: project.ownerEmail,
         },

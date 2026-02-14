@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Card,
   CardContent,
@@ -24,6 +24,8 @@ import { config } from '@/lib/config'
 interface WebhookEntry {
   id: string
   url: string
+  events: string[]
+  active: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -32,12 +34,46 @@ interface WebhookEntry {
 
 export default function SettingsPage() {
   // -- Project name state ---------------------------------------------------
-  const [projectName, setProjectName] = useState('My SmartKit Project')
+  const [projectName, setProjectName] = useState('')
   const [isSavingName, setIsSavingName] = useState(false)
 
   // -- Webhook state --------------------------------------------------------
   const [webhooks, setWebhooks] = useState<WebhookEntry[]>([])
   const [newWebhookUrl, setNewWebhookUrl] = useState('')
+  const [isLoadingWebhooks, setIsLoadingWebhooks] = useState(true)
+
+  // -- Load project name and webhooks on mount ------------------------------
+
+  const loadProjectData = useCallback(async () => {
+    try {
+      const res = await fetch('/api/project')
+      if (res.ok) {
+        const data = await res.json()
+        setProjectName(data.name)
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  const loadWebhooks = useCallback(async () => {
+    try {
+      const res = await fetch('/api/webhooks')
+      if (res.ok) {
+        const data = await res.json()
+        setWebhooks(data)
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsLoadingWebhooks(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadProjectData()
+    loadWebhooks()
+  }, [loadProjectData, loadWebhooks])
 
   // -- Handlers: project name -----------------------------------------------
 
@@ -48,9 +84,16 @@ export default function SettingsPage() {
     }
     setIsSavingName(true)
     try {
-      // TODO: wire up to PATCH /api/project endpoint
-      await new Promise((resolve) => setTimeout(resolve, 500))
-      toast.success('Project name updated')
+      const res = await fetch('/api/project', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: projectName.trim() }),
+      })
+      if (res.ok) {
+        toast.success('Project name updated')
+      } else {
+        toast.error('Failed to update project name')
+      }
     } catch {
       toast.error('Failed to update project name')
     } finally {
@@ -60,7 +103,7 @@ export default function SettingsPage() {
 
   // -- Handlers: webhooks ---------------------------------------------------
 
-  const handleAddWebhook = () => {
+  const handleAddWebhook = async () => {
     const trimmed = newWebhookUrl.trim()
     if (!trimmed) {
       toast.error('Please enter a webhook URL')
@@ -76,17 +119,38 @@ export default function SettingsPage() {
       toast.error('This webhook URL is already registered')
       return
     }
-    setWebhooks((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), url: trimmed },
-    ])
-    setNewWebhookUrl('')
-    toast.success('Webhook URL added')
+
+    try {
+      const res = await fetch('/api/webhooks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: trimmed }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setWebhooks((prev) => [...prev, data])
+        setNewWebhookUrl('')
+        toast.success('Webhook URL added')
+      } else {
+        toast.error('Failed to add webhook')
+      }
+    } catch {
+      toast.error('Failed to add webhook')
+    }
   }
 
-  const handleRemoveWebhook = (id: string) => {
-    setWebhooks((prev) => prev.filter((w) => w.id !== id))
-    toast.success('Webhook URL removed')
+  const handleRemoveWebhook = async (id: string) => {
+    try {
+      const res = await fetch(`/api/webhooks/${id}`, { method: 'DELETE' })
+      if (res.ok) {
+        setWebhooks((prev) => prev.filter((w) => w.id !== id))
+        toast.success('Webhook URL removed')
+      } else {
+        toast.error('Failed to remove webhook')
+      }
+    } catch {
+      toast.error('Failed to remove webhook')
+    }
   }
 
   const handleCopyAddress = (address: string) => {
@@ -180,7 +244,11 @@ export default function SettingsPage() {
           <Separator />
 
           {/* Registered webhooks list */}
-          {webhooks.length === 0 ? (
+          {isLoadingWebhooks ? (
+            <div className="text-center py-8 text-sm text-muted-foreground">
+              Loading webhooks...
+            </div>
+          ) : webhooks.length === 0 ? (
             <div className="text-center py-8 text-sm text-muted-foreground">
               No webhook URLs registered yet. Add one above to start receiving
               event notifications.

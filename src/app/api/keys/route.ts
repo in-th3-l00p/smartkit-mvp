@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db/drizzle'
-import { apiKeys } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { getConvexClient } from '@/lib/convex'
+import { api } from '../../../../convex/_generated/api'
+import type { Id } from '../../../../convex/_generated/dataModel'
 import { getSession } from '@/lib/auth/session'
 import { hashApiKey } from '@/lib/auth/middleware'
 import { validateBody } from '@/lib/validation/validate'
@@ -27,19 +27,21 @@ export async function GET() {
   if (!auth.success) return auth.response
 
   try {
-    const keys = await db
-      .select({
-        id: apiKeys.id,
-        keyPrefix: apiKeys.keyPrefix,
-        name: apiKeys.name,
-        createdAt: apiKeys.createdAt,
-        lastUsed: apiKeys.lastUsed,
-        requestCount: apiKeys.requestCount,
-      })
-      .from(apiKeys)
-      .where(eq(apiKeys.projectId, auth.session.projectId))
+    const convex = getConvexClient()
+    const keys = await convex.query(api.apiKeys.getApiKeysByProject, {
+      projectId: auth.session.projectId as Id<"projects">,
+    })
 
-    return NextResponse.json(keys)
+    return NextResponse.json(
+      keys.map((k) => ({
+        id: k._id,
+        keyPrefix: k.keyPrefix,
+        name: k.name,
+        createdAt: new Date(k._creationTime).toISOString(),
+        lastUsed: k.lastUsed ? new Date(k.lastUsed).toISOString() : null,
+        requestCount: k.requestCount,
+      }))
+    )
   } catch (error) {
     return NextResponse.json(
       { error: 'Failed to fetch API keys' },
@@ -61,23 +63,21 @@ export async function POST(request: NextRequest) {
     const rawKey = `sk_test_${uuidv4().replace(/-/g, '')}`
     const keyHash = await hashApiKey(rawKey)
 
-    const [apiKey] = await db
-      .insert(apiKeys)
-      .values({
-        projectId: auth.session.projectId,
-        keyHash,
-        keyPrefix: rawKey.slice(0, 12),
-        name,
-      })
-      .returning()
+    const convex = getConvexClient()
+    const apiKey = await convex.mutation(api.apiKeys.createApiKey, {
+      projectId: auth.session.projectId as Id<"projects">,
+      keyHash,
+      keyPrefix: rawKey.slice(0, 12),
+      name,
+    })
 
     return NextResponse.json(
       {
-        id: apiKey.id,
+        id: apiKey!._id,
         key: rawKey,
-        keyPrefix: apiKey.keyPrefix,
-        name: apiKey.name,
-        createdAt: apiKey.createdAt,
+        keyPrefix: apiKey!.keyPrefix,
+        name: apiKey!.name,
+        createdAt: new Date(apiKey!._creationTime).toISOString(),
       },
       { status: 201 }
     )

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth/session'
 import { createPortalSession, stripe } from '@/lib/billing/stripe'
+import { getConvexClient } from '@/lib/convex'
+import { api } from '../../../../../convex/_generated/api'
+import type { Id } from '../../../../../convex/_generated/dataModel'
 import { logger } from '@/lib/logger'
 
 export async function POST(request: NextRequest) {
@@ -13,14 +16,25 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // Look up the Stripe customer for this project
-    const customers = await stripe.customers.search({
-      query: `metadata["projectId"]:"${session.projectId}"`,
-      limit: 1,
+    const convex = getConvexClient()
+
+    // Look up the project to check for stored stripeCustomerId
+    const project = await convex.query(api.projects.getProjectById, {
+      id: session.projectId as Id<"projects">,
     })
 
-    const customer = customers.data[0]
-    if (!customer) {
+    let customerId = project?.stripeCustomerId
+
+    // Fallback to Stripe search if not stored yet
+    if (!customerId) {
+      const customers = await stripe.customers.search({
+        query: `metadata["projectId"]:"${session.projectId}"`,
+        limit: 1,
+      })
+      customerId = customers.data[0]?.id
+    }
+
+    if (!customerId) {
       return NextResponse.json(
         { error: 'No billing account found. Please subscribe to a plan first.' },
         { status: 404 }
@@ -30,7 +44,7 @@ export async function POST(request: NextRequest) {
     const origin = request.nextUrl.origin
     const returnUrl = `${origin}/dashboard/billing`
 
-    const portalSession = await createPortalSession(customer.id, returnUrl)
+    const portalSession = await createPortalSession(customerId, returnUrl)
 
     return NextResponse.json({ url: portalSession.url })
   } catch (error) {

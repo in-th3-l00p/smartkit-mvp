@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db/drizzle'
-import { apiKeys } from '@/lib/db/schema'
-import { eq, sql } from 'drizzle-orm'
+import { getConvexClient } from '@/lib/convex'
+import { api } from '../../../convex/_generated/api'
 
 async function hashApiKey(key: string): Promise<string> {
   const encoder = new TextEncoder()
@@ -37,14 +36,8 @@ export async function authenticateApiKey(
   const key = authHeader.slice(7)
   const keyHash = await hashApiKey(key)
 
-  const [found] = await db
-    .select({
-      id: apiKeys.id,
-      projectId: apiKeys.projectId,
-    })
-    .from(apiKeys)
-    .where(eq(apiKeys.keyHash, keyHash))
-    .limit(1)
+  const convex = getConvexClient()
+  const found = await convex.query(api.apiKeys.getApiKeyByHash, { keyHash })
 
   if (!found) {
     return {
@@ -57,18 +50,13 @@ export async function authenticateApiKey(
   }
 
   // Update last used and request count (fire-and-forget)
-  db.update(apiKeys)
-    .set({
-      lastUsed: new Date(),
-      requestCount: sql`${apiKeys.requestCount} + 1`,
-    })
-    .where(eq(apiKeys.id, found.id))
-    .then(() => {})
+  convex
+    .mutation(api.apiKeys.updateApiKeyUsage, { keyId: found._id })
     .catch(() => {})
 
   return {
     success: true,
-    context: { projectId: found.projectId, keyId: found.id },
+    context: { projectId: found.projectId, keyId: found._id },
   }
 }
 

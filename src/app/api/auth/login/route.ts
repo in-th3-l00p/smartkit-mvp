@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db/drizzle'
-import { projects } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { getConvexClient } from '@/lib/convex'
+import { api } from '../../../../../convex/_generated/api'
 import { validateBody } from '@/lib/validation/validate'
 import { loginSchema } from '@/lib/validation/schemas'
 import { createSession, setSessionCookie } from '@/lib/auth/session'
@@ -27,11 +26,11 @@ export async function POST(request: NextRequest) {
   const { email, password } = validation.data
 
   try {
-    const [project] = await db
-      .select()
-      .from(projects)
-      .where(eq(projects.ownerEmail, email))
-      .limit(1)
+    const convex = getConvexClient()
+
+    const project = await convex.query(api.projects.getProjectByEmail, {
+      email,
+    })
 
     if (!project) {
       return NextResponse.json(
@@ -49,14 +48,14 @@ export async function POST(request: NextRequest) {
     }
 
     const token = await createSession({
-      projectId: project.id,
+      projectId: project._id,
       email: project.ownerEmail,
     })
     await setSessionCookie(token)
 
     return NextResponse.json({
       project: {
-        id: project.id,
+        id: project._id,
         name: project.name,
         email: project.ownerEmail,
       },

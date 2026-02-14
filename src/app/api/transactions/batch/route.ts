@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authenticateApiKey } from '@/lib/auth/middleware'
 import { z } from 'zod'
 import { validateBody } from '@/lib/validation/validate'
-import { db } from '@/lib/db/drizzle'
-import { wallets, transactions } from '@/lib/db/schema'
-import { eq, and, ilike } from 'drizzle-orm'
+import { getConvexClient } from '@/lib/convex'
+import { api } from '../../../../../convex/_generated/api'
+import type { Id } from '../../../../../convex/_generated/dataModel'
 import {
   buildExecuteBatchCallData,
   getNonce,
@@ -37,17 +37,16 @@ export async function POST(request: NextRequest) {
   if (!validation.success) return validation.response
 
   const { walletAddress, calls, sponsored } = validation.data
-  const projectId = auth.context.projectId
+  const projectId = auth.context.projectId as Id<"projects">
 
   try {
+    const convex = getConvexClient()
+
     // Verify wallet exists
-    const [wallet] = await db
-      .select()
-      .from(wallets)
-      .where(
-        and(eq(wallets.projectId, projectId), ilike(wallets.address, walletAddress))
-      )
-      .limit(1)
+    const wallet = await convex.query(
+      api.wallets.getWalletByProjectAndAddress,
+      { projectId, address: walletAddress.toLowerCase() }
+    )
 
     if (!wallet) {
       return NextResponse.json({ error: 'Wallet not found' }, { status: 404 })
@@ -124,7 +123,7 @@ export async function POST(request: NextRequest) {
       signature: dummySignature,
     }
 
-    // Sign — simplified: sign keccak of packed fields
+    // Sign
     const { keccak256, encodeAbiParameters } = require('viem')
     const packed = encodeAbiParameters(
       [
@@ -162,29 +161,28 @@ export async function POST(request: NextRequest) {
     const userOpHash = await sendUserOperation(bundlerClient, userOp)
 
     // Store as a single batch transaction
-    const [tx] = await db
-      .insert(transactions)
-      .values({
-        projectId,
-        walletAddress: sender,
-        userOpHash,
-        to: 'batch', // Indicates batch tx
-        value: '0',
-        data: JSON.stringify(calls),
-        status: 'pending',
-        gasSponsored: sponsored,
-      })
-      .returning()
+    const tx = await convex.mutation(api.transactions.createTransaction, {
+      projectId,
+      walletAddress: sender,
+      userOpHash,
+      to: 'batch',
+      value: '0',
+      data: JSON.stringify(calls),
+      status: 'pending',
+      chainId: 84532,
+      gasSponsored: sponsored,
+    })
 
     if (!deployed) {
-      await db
-        .update(wallets)
-        .set({ deployed: true })
-        .where(eq(wallets.id, wallet.id))
+      await convex.mutation(api.wallets.markWalletDeployed, {
+        walletId: wallet._id,
+      })
     }
 
     // Poll for receipt in background
-    pollForReceipt(tx.id, userOpHash, bundlerClient)
+    if (tx) {
+      pollForReceipt(tx._id, userOpHash as `0x${string}`, bundlerClient)
+    }
 
     return NextResponse.json(
       {
@@ -205,24 +203,22 @@ async function pollForReceipt(
   userOpHash: `0x${string}`,
   bundlerClient: ReturnType<typeof createBundlerClient>
 ) {
+  const convex = getConvexClient()
   const maxAttempts = 30
   for (let i = 0; i < maxAttempts; i++) {
     await new Promise((resolve) => setTimeout(resolve, 2000))
     const result = await getUserOperationReceipt(bundlerClient, userOpHash)
     if (result.receipt) {
-      await db
-        .update(transactions)
-        .set({
-          txHash: result.receipt.transactionHash,
-          status: result.success ? 'success' : 'failed',
-          gasCost: formatEther(result.receipt.gasUsed),
-        })
-        .where(eq(transactions.id, txId))
+      await convex.mutation(api.transactions.updateTransactionReceipt, {
+        txId: txId as Id<"transactions">,
+        txHash: result.receipt.transactionHash,
+        status: result.success ? 'success' : 'failed',
+        gasCost: formatEther(result.receipt.gasUsed),
+      })
       return
     }
   }
-  await db
-    .update(transactions)
-    .set({ status: 'failed' })
-    .where(eq(transactions.id, txId))
+  await convex.mutation(api.transactions.markTransactionFailed, {
+    txId: txId as Id<"transactions">,
+  })
 }

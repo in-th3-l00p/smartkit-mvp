@@ -11,123 +11,19 @@ import { FileText, Filter, RefreshCw } from "lucide-react"
 type LogEntry = {
   id: string
   timestamp: string
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  method: string
   path: string
   statusCode: number
   duration: number
   apiKeyPrefix: string
 }
 
-const mockLogs: LogEntry[] = [
-  {
-    id: 'log_001',
-    timestamp: new Date(Date.now() - 15000).toISOString(),
-    method: 'POST',
-    path: '/api/wallets/create',
-    statusCode: 201,
-    duration: 342,
-    apiKeyPrefix: 'sk_live_7Hx...',
-  },
-  {
-    id: 'log_002',
-    timestamp: new Date(Date.now() - 45000).toISOString(),
-    method: 'POST',
-    path: '/api/transactions/send',
-    statusCode: 200,
-    duration: 1247,
-    apiKeyPrefix: 'sk_live_7Hx...',
-  },
-  {
-    id: 'log_003',
-    timestamp: new Date(Date.now() - 72000).toISOString(),
-    method: 'GET',
-    path: '/api/wallets/0x71C7...976F',
-    statusCode: 200,
-    duration: 89,
-    apiKeyPrefix: 'sk_test_3Qp...',
-  },
-  {
-    id: 'log_004',
-    timestamp: new Date(Date.now() - 120000).toISOString(),
-    method: 'POST',
-    path: '/api/transactions/send',
-    statusCode: 400,
-    duration: 52,
-    apiKeyPrefix: 'sk_test_3Qp...',
-  },
-  {
-    id: 'log_005',
-    timestamp: new Date(Date.now() - 180000).toISOString(),
-    method: 'GET',
-    path: '/api/transactions/0x3a4b...3a4b',
-    statusCode: 200,
-    duration: 134,
-    apiKeyPrefix: 'sk_live_7Hx...',
-  },
-  {
-    id: 'log_006',
-    timestamp: new Date(Date.now() - 240000).toISOString(),
-    method: 'GET',
-    path: '/api/stats',
-    statusCode: 200,
-    duration: 67,
-    apiKeyPrefix: 'sk_live_7Hx...',
-  },
-  {
-    id: 'log_007',
-    timestamp: new Date(Date.now() - 310000).toISOString(),
-    method: 'POST',
-    path: '/api/wallets/create',
-    statusCode: 500,
-    duration: 2103,
-    apiKeyPrefix: 'sk_live_7Hx...',
-  },
-  {
-    id: 'log_008',
-    timestamp: new Date(Date.now() - 420000).toISOString(),
-    method: 'GET',
-    path: '/api/wallets',
-    statusCode: 200,
-    duration: 156,
-    apiKeyPrefix: 'sk_test_3Qp...',
-  },
-  {
-    id: 'log_009',
-    timestamp: new Date(Date.now() - 480000).toISOString(),
-    method: 'POST',
-    path: '/api/transactions/send',
-    statusCode: 429,
-    duration: 12,
-    apiKeyPrefix: 'sk_test_3Qp...',
-  },
-  {
-    id: 'log_010',
-    timestamp: new Date(Date.now() - 600000).toISOString(),
-    method: 'GET',
-    path: '/api/transactions',
-    statusCode: 200,
-    duration: 203,
-    apiKeyPrefix: 'sk_live_7Hx...',
-  },
-  {
-    id: 'log_011',
-    timestamp: new Date(Date.now() - 720000).toISOString(),
-    method: 'POST',
-    path: '/api/wallets/create',
-    statusCode: 201,
-    duration: 389,
-    apiKeyPrefix: 'sk_live_7Hx...',
-  },
-  {
-    id: 'log_012',
-    timestamp: new Date(Date.now() - 900000).toISOString(),
-    method: 'GET',
-    path: '/api/wallets/0xdAC1...1ec7',
-    statusCode: 404,
-    duration: 43,
-    apiKeyPrefix: 'sk_test_3Qp...',
-  },
-]
+type LogStats = {
+  total: number
+  successCount: number
+  errorCount: number
+  avgDuration: number
+}
 
 function getStatusBadge(statusCode: number) {
   if (statusCode >= 200 && statusCode < 300) {
@@ -171,30 +67,45 @@ function formatDuration(ms: number) {
 type StatusFilter = 'all' | 'success' | 'error'
 
 export default function LogsPage() {
+  const [logs, setLogs] = useState<LogEntry[]>([])
+  const [stats, setStats] = useState<LogStats>({ total: 0, successCount: 0, errorCount: 0, avgDuration: 0 })
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [autoRefresh, setAutoRefresh] = useState(false)
   const [lastRefreshed, setLastRefreshed] = useState(new Date())
+  const [isLoading, setIsLoading] = useState(true)
 
-  const filteredLogs = mockLogs.filter((log) => {
+  const fetchLogs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/logs')
+      if (res.ok) {
+        const data = await res.json()
+        setLogs(data.logs)
+        setStats(data.stats)
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsLoading(false)
+    }
+    setLastRefreshed(new Date())
+  }, [])
+
+  useEffect(() => {
+    fetchLogs()
+  }, [fetchLogs])
+
+  useEffect(() => {
+    if (!autoRefresh) return
+    const interval = setInterval(fetchLogs, 5000)
+    return () => clearInterval(interval)
+  }, [autoRefresh, fetchLogs])
+
+  const filteredLogs = logs.filter((log) => {
     if (statusFilter === 'all') return true
     if (statusFilter === 'success') return log.statusCode >= 200 && log.statusCode < 400
     if (statusFilter === 'error') return log.statusCode >= 400
     return true
   })
-
-  const refresh = useCallback(() => {
-    setLastRefreshed(new Date())
-  }, [])
-
-  useEffect(() => {
-    if (!autoRefresh) return
-    const interval = setInterval(refresh, 5000)
-    return () => clearInterval(interval)
-  }, [autoRefresh, refresh])
-
-  const successCount = mockLogs.filter((l) => l.statusCode >= 200 && l.statusCode < 400).length
-  const errorCount = mockLogs.filter((l) => l.statusCode >= 400).length
-  const avgDuration = Math.round(mockLogs.reduce((sum, l) => sum + l.duration, 0) / mockLogs.length)
 
   return (
     <div className="space-y-6">
@@ -212,7 +123,7 @@ export default function LogsPage() {
             <RefreshCw className={`h-4 w-4 mr-2 ${autoRefresh ? 'animate-spin' : ''}`} />
             {autoRefresh ? 'Auto-refreshing' : 'Auto-refresh'}
           </Button>
-          <Button variant="outline" size="sm" onClick={refresh}>
+          <Button variant="outline" size="sm" onClick={fetchLogs}>
             <RefreshCw className="h-4 w-4" />
           </Button>
         </div>
@@ -226,8 +137,8 @@ export default function LogsPage() {
             <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{mockLogs.length}</div>
-            <p className="text-xs text-muted-foreground mt-1">In the last hour</p>
+            <div className="text-3xl font-bold">{stats.total}</div>
+            <p className="text-xs text-muted-foreground mt-1">All time</p>
           </CardContent>
         </Card>
         <Card>
@@ -237,12 +148,14 @@ export default function LogsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">
-              <span className="text-emerald-600">{successCount}</span>
+              <span className="text-emerald-600">{stats.successCount}</span>
               <span className="text-muted-foreground mx-1">/</span>
-              <span className="text-red-500">{errorCount}</span>
+              <span className="text-red-500">{stats.errorCount}</span>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              {((successCount / mockLogs.length) * 100).toFixed(0)}% success rate
+              {stats.total > 0
+                ? `${((stats.successCount / stats.total) * 100).toFixed(0)}% success rate`
+                : 'No data yet'}
             </p>
           </CardContent>
         </Card>
@@ -252,7 +165,7 @@ export default function LogsPage() {
             <RefreshCw className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{formatDuration(avgDuration)}</div>
+            <div className="text-3xl font-bold">{formatDuration(stats.avgDuration)}</div>
             <p className="text-xs text-muted-foreground mt-1">Across all endpoints</p>
           </CardContent>
         </Card>
@@ -287,45 +200,53 @@ export default function LogsPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Timestamp</TableHead>
-                <TableHead>Method</TableHead>
-                <TableHead>Path</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Duration</TableHead>
-                <TableHead>API Key</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredLogs.map((log) => (
-                <TableRow key={log.id}>
-                  <TableCell className="font-mono text-xs text-muted-foreground">
-                    {formatTimestamp(log.timestamp)}
-                  </TableCell>
-                  <TableCell>{getMethodBadge(log.method)}</TableCell>
-                  <TableCell className="font-mono text-sm">{log.path}</TableCell>
-                  <TableCell>{getStatusBadge(log.statusCode)}</TableCell>
-                  <TableCell>
-                    <span className={`text-sm ${log.duration > 1000 ? 'text-amber-600 font-medium' : 'text-muted-foreground'}`}>
-                      {formatDuration(log.duration)}
-                    </span>
-                  </TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground">
-                    {log.apiKeyPrefix}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {filteredLogs.length === 0 && (
+          {isLoading ? (
+            <div className="text-center py-8 text-sm text-muted-foreground">
+              Loading logs...
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                    No requests match the current filter.
-                  </TableCell>
+                  <TableHead>Timestamp</TableHead>
+                  <TableHead>Method</TableHead>
+                  <TableHead>Path</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Duration</TableHead>
+                  <TableHead>API Key</TableHead>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {filteredLogs.map((log) => (
+                  <TableRow key={log.id}>
+                    <TableCell className="font-mono text-xs text-muted-foreground">
+                      {formatTimestamp(log.timestamp)}
+                    </TableCell>
+                    <TableCell>{getMethodBadge(log.method)}</TableCell>
+                    <TableCell className="font-mono text-sm">{log.path}</TableCell>
+                    <TableCell>{getStatusBadge(log.statusCode)}</TableCell>
+                    <TableCell>
+                      <span className={`text-sm ${log.duration > 1000 ? 'text-amber-600 font-medium' : 'text-muted-foreground'}`}>
+                        {formatDuration(log.duration)}
+                      </span>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">
+                      {log.apiKeyPrefix}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {filteredLogs.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      {logs.length === 0
+                        ? 'No request logs yet. Logs will appear when API requests are made.'
+                        : 'No requests match the current filter.'}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>
