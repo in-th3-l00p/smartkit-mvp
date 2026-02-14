@@ -13,6 +13,7 @@ export interface CreateWalletResponse {
   address: string
   userId: string
   email: string
+  chainId: number
   deployed: boolean
   createdAt: string
 }
@@ -25,12 +26,25 @@ export interface SendTransactionParams {
   sponsored?: boolean
 }
 
+export interface BatchCall {
+  to: string
+  value?: string
+  data?: string
+}
+
+export interface SendBatchTransactionParams {
+  walletAddress: string
+  calls: BatchCall[]
+  sponsored?: boolean
+}
+
 export interface SendTransactionResponse {
   id: string
   walletAddress: string
   userOpHash: string
   txHash: string | null
   status: 'pending' | 'submitted' | 'success' | 'failed'
+  chainId: number
   gasSponsored: boolean
   gasCost: string | null
   createdAt: string
@@ -58,6 +72,14 @@ export interface DashboardStats {
   successRate: string
 }
 
+export interface TransactionUpdate {
+  id: string
+  userOpHash: string
+  txHash: string | null
+  status: 'success' | 'failed'
+  gasCost: string | null
+}
+
 export class SmartKit {
   private apiKey: string
   private apiUrl: string
@@ -76,13 +98,15 @@ export class SmartKit {
       ...options,
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${this.apiKey}`,
         ...options?.headers,
       },
     })
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }))
+      const error = await response
+        .json()
+        .catch(() => ({ error: 'Unknown error' }))
       throw new SmartKitError(
         error.error || `Request failed with status ${response.status}`,
         response.status
@@ -91,6 +115,8 @@ export class SmartKit {
 
     return response.json()
   }
+
+  // --- Wallets ---
 
   async createWallet(params: CreateWalletParams): Promise<CreateWalletResponse> {
     return this.request<CreateWalletResponse>('/wallets/create', {
@@ -107,8 +133,21 @@ export class SmartKit {
     return this.request<CreateWalletResponse[]>('/wallets')
   }
 
-  async sendTransaction(params: SendTransactionParams): Promise<SendTransactionResponse> {
+  // --- Transactions ---
+
+  async sendTransaction(
+    params: SendTransactionParams
+  ): Promise<SendTransactionResponse> {
     return this.request<SendTransactionResponse>('/transactions/send', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    })
+  }
+
+  async sendBatchTransaction(
+    params: SendBatchTransactionParams
+  ): Promise<SendTransactionResponse & { callCount: number }> {
+    return this.request('/transactions/batch', {
       method: 'POST',
       body: JSON.stringify(params),
     })
@@ -120,10 +159,6 @@ export class SmartKit {
 
   async listTransactions(): Promise<SendTransactionResponse[]> {
     return this.request<SendTransactionResponse[]>('/transactions')
-  }
-
-  async getStats(): Promise<DashboardStats> {
-    return this.request<DashboardStats>('/stats')
   }
 
   async waitForTransaction(
@@ -139,10 +174,69 @@ export class SmartKit {
       if (tx.status === 'success' || tx.status === 'failed') {
         return tx
       }
-      await new Promise(resolve => setTimeout(resolve, interval))
+      await new Promise((resolve) => setTimeout(resolve, interval))
     }
 
     throw new SmartKitError('Transaction timeout', 408)
+  }
+
+  // --- Real-time ---
+
+  onTransactionUpdate(
+    callback: (update: TransactionUpdate) => void,
+    options?: { walletAddress?: string }
+  ): () => void {
+    const params = new URLSearchParams()
+    if (options?.walletAddress) {
+      params.set('walletAddress', options.walletAddress)
+    }
+    const url = `${this.apiUrl}/transactions/stream?${params.toString()}`
+
+    const abortController = new AbortController()
+
+    fetch(url, {
+      headers: { Authorization: `Bearer ${this.apiKey}` },
+      signal: abortController.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok || !response.body) return
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          buffer += decoder.decode(value, { stream: true })
+          const blocks = buffer.split('\n\n')
+          buffer = blocks.pop() || ''
+
+          for (const block of blocks) {
+            const eventMatch = block.match(/event: (\w+)/)
+            const dataMatch = block.match(/data: (.+)/)
+            if (eventMatch?.[1] === 'transaction' && dataMatch?.[1]) {
+              try {
+                callback(JSON.parse(dataMatch[1]))
+              } catch {
+                // Ignore parse errors
+              }
+            }
+          }
+        }
+      })
+      .catch(() => {
+        // Connection lost
+      })
+
+    // Return unsubscribe function
+    return () => abortController.abort()
+  }
+
+  // --- Stats ---
+
+  async getStats(): Promise<DashboardStats> {
+    return this.request<DashboardStats>('/stats')
   }
 }
 

@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { LayoutDashboard, Wallet, ArrowLeftRight, Key, FileText, Layers } from "lucide-react"
+import { LayoutDashboard, Wallet, ArrowLeftRight, Key, FileText, Layers, BarChart3, Settings, ScrollText, CreditCard } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -12,6 +12,10 @@ const navItems = [
   { href: "/dashboard/wallets", label: "Wallets", icon: Wallet },
   { href: "/dashboard/transactions", label: "Transactions", icon: ArrowLeftRight },
   { href: "/dashboard/api-keys", label: "API Keys", icon: Key },
+  { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/dashboard/logs", label: "Logs", icon: ScrollText },
+  { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
+  { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ]
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

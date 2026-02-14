@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {IAccount} from "account-abstraction/interfaces/IAccount.sol";
+import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
+
 /**
- * A simple ERC-4337 smart account.
+ * A simple ERC-4337 smart account (v0.7 compliant).
  * Validates UserOperations via ECDSA signature from an owner.
  * Supports execute/executeBatch for calling other contracts.
  */
-contract SimpleAccount {
+contract SimpleAccount is IAccount {
     address public owner;
     address public immutable entryPoint;
     bool private _initialized;
@@ -56,34 +59,32 @@ contract SimpleAccount {
         }
     }
 
+    /// @notice ERC-4337 v0.7 validateUserOp with PackedUserOperation
     function validateUserOp(
-        bytes calldata userOp,
+        PackedUserOperation calldata userOp,
         bytes32 userOpHash,
         uint256 missingAccountFunds
     ) external onlyEntryPoint returns (uint256 validationData) {
-        // Extract signature from userOp (last field)
-        bytes memory signature = _extractSignature(userOp);
+        // Signature is stored in userOp.signature field
+        bytes memory signature = userOp.signature;
 
-        // Verify ECDSA signature
-        bytes32 ethSignedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash));
+        // Verify ECDSA signature over the userOpHash
+        bytes32 ethSignedHash = keccak256(
+            abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash)
+        );
         address recovered = _recoverSigner(ethSignedHash, signature);
 
         if (recovered != owner) {
             return 1; // SIG_VALIDATION_FAILED
         }
 
-        // Pay prefund
+        // Pay prefund to EntryPoint
         if (missingAccountFunds > 0) {
             (bool success,) = payable(entryPoint).call{value: missingAccountFunds}("");
             require(success, "prefund failed");
         }
 
         return 0; // SIG_VALIDATION_SUCCESS
-    }
-
-    function _extractSignature(bytes calldata userOp) internal pure returns (bytes memory) {
-        // Simplified: assume signature is the entire userOp for MVP
-        return userOp;
     }
 
     function _recoverSigner(bytes32 hash, bytes memory signature) internal pure returns (address) {
